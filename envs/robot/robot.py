@@ -117,7 +117,6 @@ class Robot:
             right_loader.fix_root_link = True
             self.left_entity = left_loader.load(self.left_urdf_path)
             self.right_entity = right_loader.load(self.right_urdf_path)
-
         self.left_entity.set_root_pose(self.left_entity_origion_pose)
         self.right_entity.set_root_pose(self.right_entity_origion_pose)
 
@@ -188,7 +187,6 @@ class Robot:
         self.left_gripper = get_gripper_joints(self.left_entity.find_joint_by_name, self.left_gripper_name)
         self.right_gripper = get_gripper_joints(self.right_entity.find_joint_by_name, self.right_gripper_name)
         self.gripper_name = deepcopy(self.left_fix_gripper_name) + deepcopy(self.right_fix_gripper_name)
-
         for g in self.left_gripper:
             self.gripper_name.append(g[0].child_link.get_name())
         for g in self.right_gripper:
@@ -208,6 +206,11 @@ class Robot:
             if self.right_camera is None:
                 print("No right camera link")
                 self.right_camera = self.right_entity.get_links()[0]
+
+        # self.head_camera = self._entity.find_link_by_name("zed_link")
+        # if self.head_camera is None:
+        #     print("No head camera link")
+        #     self.head_camera = self._entity.get_links()[0]
 
         for i, joint in enumerate(self.left_active_joints):
             if joint not in self.left_gripper:
@@ -257,9 +260,7 @@ class Robot:
     def set_planner(self, scene=None):
         abs_left_curobo_yml_path = os.path.join(CONFIGS.ROOT_PATH, self.left_curobo_yml_path)
         abs_right_curobo_yml_path = os.path.join(CONFIGS.ROOT_PATH, self.right_curobo_yml_path)
-
         self.communication_flag = (abs_left_curobo_yml_path != abs_right_curobo_yml_path)
-
         if self.is_dual_arm:
             abs_left_curobo_yml_path = abs_left_curobo_yml_path.replace("curobo.yml", "curobo_left.yml")
             abs_right_curobo_yml_path = abs_right_curobo_yml_path.replace("curobo.yml", "curobo_right.yml")
@@ -327,7 +328,11 @@ class Robot:
         except:
             print("Update world pointcloud wrong!")
 
-    def _trans_from_gripper_to_endlink(self, target_pose, arm_tag=None):
+    def _trans_from_end_link_to_gripper(self, target_pose, arm_tag=None):
+        # transform from last joint pose to gripper pose
+        # target_pose: np.array([x, y, z, qx, qy, qz, qw])
+        # gripper_pose_pos: np.array([x, y, z])
+        # gripper_pose_quat: np.array([qx, qy, qz, qw])
         gripper_bias = (self.left_gripper_bias if arm_tag == "left" else self.right_gripper_bias)
         inv_delta_matrix = (self.left_inv_delta_matrix if arm_tag == "left" else self.right_inv_delta_matrix)
         target_pose_arr = np.array(target_pose)
@@ -368,7 +373,7 @@ class Robot:
             now_qpos = deepcopy(last_qpos)
         target_lst_copy = deepcopy(target_lst)
         for i in range(len(target_lst_copy)):
-            target_lst_copy[i] = self._trans_from_gripper_to_endlink(target_lst_copy[i], arm_tag="left")
+            target_lst_copy[i] = self._trans_from_end_link_to_gripper(target_lst_copy[i], arm_tag="left")
 
         if self.communication_flag:
             self.left_conn.send({
@@ -403,7 +408,7 @@ class Robot:
             now_qpos = deepcopy(last_qpos)
         target_lst_copy = deepcopy(target_lst)
         for i in range(len(target_lst_copy)):
-            target_lst_copy[i] = self._trans_from_gripper_to_endlink(target_lst_copy[i], arm_tag="right")
+            target_lst_copy[i] = self._trans_from_end_link_to_gripper(target_lst_copy[i], arm_tag="right")
 
         if self.communication_flag:
             self.right_conn.send({
@@ -437,8 +442,7 @@ class Robot:
         else:
             now_qpos = deepcopy(last_qpos)
 
-        trans_target_pose = self._trans_from_gripper_to_endlink(target_pose, arm_tag="left")
-
+        trans_target_pose = self._trans_from_end_link_to_gripper(target_pose, arm_tag="left")
         if self.communication_flag:
             self.left_conn.send({
                 "cmd": "plan_path",
@@ -471,7 +475,7 @@ class Robot:
         else:
             now_qpos = deepcopy(last_qpos)
 
-        trans_target_pose = self._trans_from_gripper_to_endlink(target_pose, arm_tag="right")
+        trans_target_pose = self._trans_from_end_link_to_gripper(target_pose, arm_tag="right")
 
         if self.communication_flag:
             self.right_conn.send({
@@ -625,11 +629,10 @@ class Robot:
         normal_right_gripper_val = np.clip(normal_right_gripper_val, 0, 1)
         return [normal_left_gripper_val, normal_right_gripper_val]
 
-    def set_gripper(self, gripper_val, arm_tag, gripper_eps=0.1):  # gripper_val in [0,1]
+    def set_gripper(self, gripper_val, arm_tag, gripper_eps=0.1):  
         self._entity_qf(self.left_entity)
         self._entity_qf(self.right_entity)
         gripper_val = np.clip(gripper_val, 0, 1)
-
         if arm_tag == "left":
             joints = self.left_gripper
             self.left_gripper_val = gripper_val

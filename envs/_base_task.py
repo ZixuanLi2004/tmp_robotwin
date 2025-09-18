@@ -117,7 +117,7 @@ class Base_Task(gym.Env):
 
         self.instruction = None  # for Eval
 
-        self.create_table_and_wall(table_xy_bias=table_xy_bias, table_height=0.74)
+        self.create_table_and_wall(table_xy_bias=table_xy_bias, table_height=1)
         self.load_robot(**kwags)
         self.load_camera(**kwags)
         self.robot.move_to_homestate()
@@ -268,20 +268,17 @@ class Base_Task(gym.Env):
                 y=kwargs.get("camera_rpy_y", 2.45),
             )
 
-    def create_table_and_wall(self, table_xy_bias=[0, 0], table_height=0.74):
+    def create_table_and_wall(self, table_xy_bias=[0, 0], table_height=1):
         self.table_xy_bias = table_xy_bias
         wall_texture, table_texture = None, None
         table_height += self.table_z_bias
-
         if self.random_background:
             texture_type = "seen" if not self.eval_mode else "unseen"
             directory_path = f"./assets/background_texture/{texture_type}"
             file_count = len(
                 [name for name in os.listdir(directory_path) if os.path.isfile(os.path.join(directory_path, name))])
-
             # wall_texture, table_texture = random.randint(0, file_count - 1), random.randint(0, file_count - 1)
             wall_texture, table_texture = np.random.randint(0, file_count), np.random.randint(0, file_count)
-
             self.wall_texture, self.table_texture = (
                 f"{texture_type}/{wall_texture}",
                 f"{texture_type}/{table_texture}",
@@ -295,26 +292,25 @@ class Base_Task(gym.Env):
 
         self.wall = create_box(
             self.scene,
-            sapien.Pose(p=[0, 1, 1.5]),
+            sapien.Pose(p=[0, 1.2, 1.5]),
             half_size=[3, 0.6, 1.5],
             color=(1, 0.9, 0.9),
             name="wall",
             texture_id=self.wall_texture,
             is_static=True,
         )
-
         self.table = create_table(
             self.scene,
             sapien.Pose(p=[table_xy_bias[0], table_xy_bias[1], table_height]),
-            length=1.2,
-            width=0.7,
+            length=2,
+            width=0.8,
             height=table_height,
             thickness=0.05,
             is_static=True,
             texture_id=self.table_texture,
         )
 
-    def get_cluttered_table(self, cluttered_numbers=10, xlim=[-0.59, 0.59], ylim=[-0.34, 0.34], zlim=[0.741]):
+    def get_cluttered_table(self, cluttered_numbers=3, xlim=[-0.59, 0.59], ylim=[-0.34, 0.34], zlim=[1]):
         self.record_cluttered_objects = []  # record cluttered objects
 
         xlim[0] += self.table_xy_bias[0]
@@ -430,6 +426,7 @@ class Base_Task(gym.Env):
             now_ambient_light = np.clip(np.array(now_ambient_light) + np.random.rand(3) * 0.2 - 0.1, 0, 1)
             self.scene.set_ambient_light(now_ambient_light)
         self.cameras.update_wrist_camera(self.robot.left_camera.get_pose(), self.robot.right_camera.get_pose())
+        # self.cameras.update_head_camera(self.robot.head_camera.get_pose())
         self.scene.update_render()
 
     # =========================================================== Basic APIs ===========================================================
@@ -744,7 +741,6 @@ class Base_Task(gym.Env):
             return
         if type(pose) == sapien.Pose:
             pose = pose.p.tolist() + pose.q.tolist()
-
         if self.need_plan:
             left_result = self.robot.left_plan_path(pose, constraint_pose=constraint_pose)
             self.left_joint_path.append(deepcopy(left_result))
@@ -1104,7 +1100,6 @@ class Base_Task(gym.Env):
         dis = 1e9
 
         pref_direction = self.robot.get_grasp_perfect_direction(arm_tag)
-
         def get_grasp_pose(pre_grasp_pose, pre_grasp_dis):
             grasp_pose = deepcopy(pre_grasp_pose)
             grasp_pose = np.array(grasp_pose)
@@ -1157,7 +1152,6 @@ class Base_Task(gym.Env):
                 res_pre_pose = pre_pose
                 res_pose = pose
                 dis = now_dis
-
         if dis_top_down < 0.15:
             return res_pre_top_down_pose, res_top_down_pose
         if dis_side < 0.15:
@@ -1317,11 +1311,13 @@ class Base_Task(gym.Env):
             pre_dis=dis,
             **args,
         )
-
-        actions = [
-            Action(arm_tag, "move", target_pose=place_pre_pose),
-            Action(arm_tag, "move", target_pose=place_pose),
-        ]
+        if pre_dis != dis:
+            actions = [
+                Action(arm_tag, "move", target_pose=place_pre_pose),
+                Action(arm_tag, "move", target_pose=place_pose),
+            ]
+        else:
+            actions = [Action(arm_tag, "move", target_pose=place_pre_pose)]
         if is_open:
             actions.append(Action(arm_tag, "open", target_gripper_pos=1.0))
         return arm_tag, actions
@@ -1409,7 +1405,6 @@ class Base_Task(gym.Env):
             max_control_len = max(max_control_len, right_arm["position"].shape[0])
         if right_gripper is not None:
             max_control_len = max(max_control_len, right_gripper["num_step"])
-
         for control_idx in range(max_control_len):
 
             if (left_arm is not None and control_idx < left_arm["position"].shape[0]):  # control left arm
@@ -1455,7 +1450,7 @@ class Base_Task(gym.Env):
 
         return True  # TODO: maybe need try error
 
-    def take_action(self, action, action_type:Literal['qpos', 'ee', 'delta_ee']='qpos'):  # action_type: qpos or ee
+    def take_action(self, action, action_type='qpos'):  # action_type: qpos or ee
         if self.take_action_cnt == self.step_lim or self.eval_success:
             return
 
@@ -1550,28 +1545,7 @@ class Base_Task(gym.Env):
                 topp_right_flag = False
                 right_n_step = 50  # fixed
         
-        elif action_type == 'ee' or action_type == 'delta_ee':
-            # ====================== delta_ee control ======================
-            if action_type == 'delta_ee':
-                now_left_action = self.get_arm_pose("left")
-                now_right_action = self.get_arm_pose("right")
-                def transfer_action(action, delta_action):
-                    action_mat = np.eye(4)
-                    delta_mat = np.eye(4)
-                    action_mat[:3, 3] = action[:3]
-                    action_mat[:3, :3] = t3d.quaternions.quat2mat(action[3:])
-                    delta_mat[:3, 3] = delta_action[:3]
-                    delta_mat[:3, :3] = t3d.quaternions.quat2mat(delta_action[3:])
-                    new_mat = action_mat @ delta_mat
-                    new_p = new_mat[:3, 3]
-                    new_q = t3d.quaternions.mat2quat(new_mat[:3, :3])
-                    return np.concatenate((new_p, new_q))
-                now_left_action = transfer_action(now_left_action, left_arm_actions[0])
-                now_right_action = transfer_action(now_right_action, right_arm_actions[0])
-                left_arm_actions = np.array([now_left_action])
-                right_arm_actions = np.array([now_right_action])
-            # ====================== end of delta_ee control ===============
-
+        elif action_type == 'ee':
             left_result = self.robot.left_plan_path(left_arm_actions[0])
             right_result = self.robot.right_plan_path(right_arm_actions[0])
             if left_result["status"] != "Success":
@@ -1652,12 +1626,9 @@ class Base_Task(gym.Env):
 
             self.scene.step()
             self._update_render()
-                
+
             if self.check_success():
                 self.eval_success = True
-                self.get_obs() # update obs
-                if (self.eval_video_path is not None):
-                    self.eval_video_ffmpeg.stdin.write(self.now_obs["observation"]["head_camera"]["rgb"].tobytes())
                 return
 
         self._update_render()
